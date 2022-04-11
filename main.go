@@ -1,15 +1,17 @@
 package main
 
 import (
+	"strings"
+
 	g "github.com/AllenDang/giu"
 	"github.com/valyala/fasthttp"
-	"strconv"
-	"strings"
 )
 
-var email = ""
-var pass = ""
-var output = "Waiting for user...\n"
+var (
+	output = "Waiting for user...\n"
+	pass   = ""
+	email  = ""
+)
 
 func calllogin() {
 	go login()
@@ -35,35 +37,22 @@ func login() {
 	var token = string(resp.Header.Peek("Location"))
 	token = token[46:]
 	output += "Obtained token, " + token + "\n"
-	output += "Initiate combo generation...\n"
 	req.SetRequestURI("https://www.bestbuy.com/identity/signin?token=" + token)
-	var combos = 5
-	var max = 4
 	var mailfield string
 	var alphas []string
 	var passfield []string
-	for combos > max {
-		err := fasthttp.Do(req, resp)
-		if err != nil {
-			return
-		}
-		var respbody = string(resp.Body())
-		mailfield = strings.Split(strings.Split(respbody, "emailFieldName\":\"")[1], "\",")[0]
-		var alphahold = strings.Split(strings.Split(respbody, "alpha\":[")[1], "]")[0]
-		var passhold = strings.Split(strings.Split(respbody, "codeList\":[")[1], "]")[0]
-		alphahold = strings.ReplaceAll(alphahold, "\"", "")
-		passhold = strings.ReplaceAll(passhold, "\"", "")
-		alphas = strings.Split(alphahold, ",")
-		passfield = strings.Split(passhold, ",")
-		combos = len(alphas) * len(passfield)
-		max = len(alphas) * 2
-		if combos > max {
-			output += strconv.FormatInt(int64(combos), 10) + " combinations is too many. Needed " + strconv.FormatInt(int64(max), 10) + "...\n"
-		} else {
-			output += strconv.FormatInt(int64(combos), 10) + " have been generated!\n"
-		}
+	err = fasthttp.Do(req, resp)
+	if err != nil {
+		return
 	}
-	output += "Bruting login possibilities...\n"
+	var respbody = string(resp.Body())
+	mailfield = strings.Split(strings.Split(respbody, "emailFieldName\":\"")[1], "\",")[0]
+	var alphahold = strings.Split(strings.Split(respbody, "alpha\":[")[1], "]")[0]
+	var passhold = strings.Split(strings.Split(respbody, "codeList\":[")[1], "]")[0]
+	alphahold = strings.ReplaceAll(alphahold, "\"", "")
+	passhold = strings.ReplaceAll(passhold, "\"", "")
+	alphas = strings.Split(alphahold, ",")
+	passfield = strings.Split(passhold, ",")
 	req.SetRequestURI("https://www.bestbuy.com/identity/authenticate")
 	req.Header.SetMethod("POST")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:97.0) Gecko/20100101 Firefox/97.0")
@@ -77,37 +66,34 @@ func login() {
 	req.Header.Set("Accept-Language", "en-US")
 	req.Header.Set("X-Requested-With", "com.bestbuy.android")
 	req.Header.Set("Cookie", "ZPLANK=")
-	var breakout = false
-	for _, alpha := range alphas {
-		for _, passes := range passfield {
-			req.SetBody([]byte("{\"token\":\"" + token + "\",\"loginMethod\":\"UID_PASSWORD\",\"flowOptions\":\"0000000000000000\",\"enrollBiometric\":true,\"alpha\":\"" + alpha + "\",\"Salmon\":\"FA7F2\",\"" + passes + "\":\"" + pass + "\",\"" + mailfield + "\":\"" + email + "\"}"))
-			err := fasthttp.Do(req, resp)
-			if err != nil {
-				return
-			}
-			if strings.Contains(string(resp.Body()), "success") {
-				output += "Logged in successfully!\n"
-				breakout = true
-				break
-			} else if strings.Contains(string(resp.Body()), "expired") {
-				output += "Not this one...\n"
-			} else if strings.Contains(string(resp.Body()), "failed") {
-				output += "An error occurred checking this combo.\n"
-				breakout = true
-				break
-			} else if strings.Contains(string(resp.Body()), "failure") {
-				output += "The provided credentials are invalid.\n"
-				breakout = true
-				break
-			} else if strings.Contains(string(resp.Body()), "stepUpRequired") {
-				output += "2FA required. Reset in your browser and retry.\n"
-				breakout = true
-				break
-			}
-		}
-		if breakout {
-			break
-		}
+	alpha, err := getAlphaCode(alphas)
+	if err != nil {
+		output += "Unable to get correct alpha. This could happen if you're restricted from using bestbuy on this IP address."
+		return
+	}
+	passField, err := getPasswordCode(passfield)
+	if err != nil {
+		output += "Unable to get correct password field. This could happen if you're restricted from using bestbuy on this IP address."
+		return
+	}
+	req.SetBody([]byte("{\"token\":\"" + token + "\",\"loginMethod\":\"UID_PASSWORD\",\"flowOptions\":\"0000000000000000\",\"enrollBiometric\":true,\"alpha\":\"" + alpha + "\",\"Salmon\":\"FA7F2\",\"" + passField + "\":\"" + pass + "\",\"" + mailfield + "\":\"" + email + "\"}"))
+	err = fasthttp.Do(req, resp)
+	if err != nil {
+		return
+	}
+	b := string(resp.Body())
+	if strings.Contains(b, "success") {
+		output += "Logged in successfully!\n"
+	} else if strings.Contains(b, "expired") {
+		output += "Not this one...\n"
+	} else if strings.Contains(b, "failed") {
+		output += "An error occurred checking this combo.\n"
+	} else if strings.Contains(b, "failure") {
+		output += "The provided credentials are invalid.\n"
+	} else if strings.Contains(b, "stepUpRequired") {
+		output += "2FA required. Reset in your browser and retry.\n"
+	} else {
+		output += "Unknown output: " + b
 	}
 }
 
